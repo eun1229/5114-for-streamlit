@@ -94,12 +94,18 @@ mbta-dashboard/
 ## Setup
 
 ### Prerequisites
+Install the dashboard dependencies (pinned in the repo-root `requirements.txt`):
 ```bash
-pip install streamlit plotly snowflake-connector-python pandas cryptography
+pip install -r ../requirements.txt
 ```
 
 ### Credentials
-Create `.streamlit/secrets.toml`:
+Copy the example secrets file and fill in your Snowflake values:
+```bash
+cp .streamlit/secrets.toml.example .streamlit/secrets.toml
+```
+
+Minimal `secrets.toml` for local development:
 ```toml
 SF_USER             = "your_snowflake_username"
 SF_ACCOUNT          = "UNB02139"
@@ -108,13 +114,26 @@ SF_DATABASE         = "LEMMING_DB"
 SF_PRIVATE_KEY_PATH = "/path/to/rsa_key.p8"
 ```
 
-### Run
+For Streamlit Community Cloud (no persistent filesystem), use `SF_PRIVATE_KEY`
+instead and paste the full PEM contents of the `.p8` file as a triple-quoted
+string. See `.streamlit/secrets.toml.example` for the exact format.
+
+### Run locally
 ```bash
 cd mbta-dashboard
 streamlit run dashboard.py
 ```
 
 Open `http://localhost:8501` in your browser.
+
+### Deploy to Streamlit Community Cloud
+1. Push this repo to GitHub.
+2. Create a new app at <https://share.streamlit.io> with main file path
+   `mbta-dashboard/dashboard.py`.
+3. Paste the contents of `.streamlit/secrets.toml.example` into the app's
+   **Settings → Secrets** panel and replace the placeholder values.
+4. Save — the app redeploys automatically. Streamlit Cloud picks up
+   `requirements.txt` from the repo root.
 
 ---
 

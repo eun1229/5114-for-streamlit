@@ -29,7 +29,19 @@
 - Set `AIRFLOW_CONN_SNOWFLAKE_DEFAULT` in `.env`; this is the required Snowflake connection source for Airflow SQL tasks (instead of creating the connection in Airflow UI).
 - `.env` should stay untracked (already covered by `.gitignore`).
 
-Install local dependencies in your environment:
+## Dependencies
+
+Three requirements files live at the repo root:
+
+- `requirements.txt` — **Streamlit dashboard only**. Kept at the root so
+  Streamlit Community Cloud picks it up automatically when deploying
+  `mbta-dashboard/dashboard.py`.
+- `requirements-airflow.txt` — Airflow orchestration runtime.
+- `requirements-spark.txt` — Spark loader runtime.
+- `requirements-pipeline.txt` — convenience file that installs both of the
+  above for full local pipeline development.
+
+Install pipeline dependencies in your environment:
 
 ```bash
 AIRFLOW_VERSION=3.0.6
@@ -38,6 +50,38 @@ CONSTRAINT_URL="https://raw.githubusercontent.com/apache/airflow/constraints-${A
 
 pip install -r requirements-airflow.txt --constraint "${CONSTRAINT_URL}"
 pip install -r requirements-spark.txt
+```
+
+Install dashboard dependencies in your environment:
+
+```bash
+pip install -r requirements.txt
+```
+
+## Deploying the dashboard to Streamlit Community Cloud
+
+`mbta-dashboard/dashboard.py` is the Streamlit entrypoint.
+
+1. Push this repo to GitHub.
+2. In [Streamlit Community Cloud](https://share.streamlit.io), create a new app
+   pointing at this repo with:
+   - **Main file path:** `mbta-dashboard/dashboard.py`
+   - **Python version:** 3.11 (or the version you tested locally)
+3. Open **Manage app → Settings → Secrets** and paste the contents of
+   `mbta-dashboard/.streamlit/secrets.toml.example`, replacing the placeholder
+   values with your real Snowflake credentials. Include the entire PEM body
+   (including the `BEGIN/END` lines) as `SF_PRIVATE_KEY`.
+4. Save secrets — the app will redeploy. Streamlit Cloud reads
+   `requirements.txt` from the repo root automatically.
+
+To run the same app locally instead, copy
+`mbta-dashboard/.streamlit/secrets.toml.example` to
+`mbta-dashboard/.streamlit/secrets.toml`, fill in the values (you may use
+`SF_PRIVATE_KEY_PATH` instead of pasting the key inline), then:
+
+```bash
+pip install -r requirements.txt
+streamlit run mbta-dashboard/dashboard.py
 ```
 
 Comprehensive local Airflow setup and execution guide:

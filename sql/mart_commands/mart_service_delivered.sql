@@ -1,3 +1,9 @@
+-- Builds the daily MBTA bus "service delivered" metric per route.
+-- For each scheduled trip on $trip_start_date, we compare the GTFS static
+-- schedule against GTFS-realtime trip updates to classify the trip as
+-- DELIVERED, CANCELED, NO_RT_DATA, or ADDED, then aggregate the counts and
+-- compute pct_delivered = delivered / scheduled.
+
 SET trip_start_date = TO_DATE('{{ ds }}') - 2;
 
 SET static_version_date = (
@@ -24,6 +30,8 @@ INSERT INTO LEMMING_DB.FINAL_PROJECT_MART.METRIC_SERVICE_DELIVERED (
     static_version_date
 )
 WITH weekday_service_ids AS (
+    -- Service IDs whose calendar window covers $trip_start_date and whose
+    -- weekday flag for that day-of-week is true (regular weekly service).
     SELECT
         c.feed_start_date,
         c.service_id
@@ -45,6 +53,8 @@ WITH weekday_service_ids AS (
 ),
 
 added_service_ids AS (
+    -- GTFS calendar exceptions that ADD service for this specific date
+    -- (exception_type = 1), e.g. holiday schedules layered on top of calendar.
     SELECT
         cd.feed_start_date,
         cd.service_id
@@ -55,6 +65,8 @@ added_service_ids AS (
 ),
 
 removed_service_ids AS (
+    -- GTFS calendar exceptions that REMOVE service for this specific date
+    -- (exception_type = 2), e.g. a normally-weekday service taken offline.
     SELECT
         cd.feed_start_date,
         cd.service_id
@@ -65,6 +77,7 @@ removed_service_ids AS (
 ),
 
 active_service_ids AS (
+    -- Union of regular weekday service and one-off added service.
     SELECT feed_start_date, service_id
     FROM weekday_service_ids
 
@@ -75,6 +88,8 @@ active_service_ids AS (
 ),
 
 final_service_ids AS (
+    -- Subtract the removed service IDs to get the effective set of services
+    -- actually scheduled to run on $trip_start_date.
     SELECT a.feed_start_date, a.service_id
     FROM active_service_ids a
     LEFT JOIN removed_service_ids r
@@ -84,6 +99,8 @@ final_service_ids AS (
 ),
 
 first_stop_times AS (
+    -- Pick each trip's first stop (rn = 1) so we can read its scheduled
+    -- departure time and filter out trips that start past midnight (next day).
     SELECT
         st.feed_start_date,
         st.trip_id,
@@ -98,6 +115,9 @@ first_stop_times AS (
 ),
 
 scheduled_bus_trips AS (
+    -- The denominator: every bus trip (route_type = 3) scheduled to run on
+    -- $trip_start_date according to the active static feed. Trips whose first
+    -- departure hour >= 24 belong to the next service day and are excluded.
     SELECT
         $trip_start_date AS service_date,
         $trip_start_date AS trip_start_date,
@@ -122,6 +142,8 @@ scheduled_bus_trips AS (
 ),
 
 rt_trips AS (
+    -- Realtime trip updates seen for $trip_start_date. We normalize blank/null
+    -- trip_schedule_rel to 'SCHEDULED' (GTFS-rt's default relationship).
     SELECT
         f.trip_id,
         f.trip_start_date,
@@ -134,6 +156,13 @@ rt_trips AS (
 ),
 
 joined AS (
+    -- Left-join scheduled trips to realtime updates and assign a delivery
+    -- status used for counting:
+    --   NO_RT_DATA -> scheduled, but no realtime feed seen at all
+    --   CANCELED   -> realtime explicitly marked the trip canceled
+    --   ADDED      -> trip not in static schedule, added at runtime
+    --                 (excluded from the denominator below)
+    --   DELIVERED  -> realtime updates exist and trip ran as scheduled
     SELECT
         s.service_date,
         s.trip_start_date,
@@ -155,6 +184,9 @@ joined AS (
      AND s.trip_start_date = rt.trip_start_date
 )
 
+-- Final aggregation: one row per (route_id, direction_id) for $trip_start_date.
+-- ADDED trips are excluded from the scheduled denominator (but still reported as added_trips)
+-- so pct_delivered reflects the share of only scheduled service that was actually delivered.
 SELECT
     service_date,
     trip_start_date,
@@ -167,6 +199,8 @@ SELECT
     COUNT_IF(delivery_status = 'CANCELED') AS canceled_trips,
     COUNT_IF(delivery_status = 'NO_RT_DATA') AS no_rt_data_trips,
 
+    -- Count of ADDED realtime trips for this route/direction, looked up
+    -- separately because they don't exist in the static schedule.
     (
         SELECT COUNT(DISTINCT f.trip_id)
         FROM LEMMING_DB.FINAL_PROJECT_FACT.FACT_TRIP_UPDATES f
@@ -180,6 +214,7 @@ SELECT
               )
     ) AS added_trips,
 
+    -- delivered / scheduled
     ROUND(
         COUNT_IF(delivery_status = 'DELIVERED') * 100.0
         / NULLIF(COUNT(*), 0),
